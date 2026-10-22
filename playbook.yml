@@ -1,0 +1,80 @@
+---
+- name: TP6 - Docker + Terraform sur les VM, puis conteneur CV One Page créé par Terraform
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    app_dir: /opt/cv-app
+    hashicorp_key: /etc/apt/keyrings/hashicorp.asc
+
+  tasks:
+    - name: Installer Docker et les prérequis
+      ansible.builtin.apt:
+        name: [docker.io, gnupg, ca-certificates, curl]
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Docker démarré et activé au boot
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: true
+
+    - name: Autoriser l'utilisateur vagrant à utiliser Docker
+      ansible.builtin.user:
+        name: vagrant
+        groups: docker
+        append: true
+
+    - name: Créer le dossier des clés apt
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+
+    - name: Télécharger la clé du dépôt HashiCorp
+      ansible.builtin.get_url:
+        url: https://apt.releases.hashicorp.com/gpg
+        dest: "{{ hashicorp_key }}"
+        mode: '0644'
+
+    - name: Ajouter le dépôt HashiCorp
+      ansible.builtin.apt_repository:
+        repo: "deb [signed-by={{ hashicorp_key }}] https://apt.releases.hashicorp.com {{ ansible_distribution_release }} main"
+        filename: hashicorp
+        state: present
+
+    - name: Installer Terraform
+      ansible.builtin.apt:
+        name: terraform
+        state: present
+
+    - name: Copier le CV et sa configuration Terraform sur la VM
+      ansible.builtin.copy:
+        src: "{{ item }}"
+        dest: "{{ app_dir }}/"
+        mode: '0644'
+        directory_mode: '0755'
+      loop:
+        - cv
+        - terraform
+
+    - name: Créer le conteneur CV One Page avec Terraform
+      community.general.terraform:
+        project_path: "{{ app_dir }}/terraform"
+        force_init: true
+        state: present
+        variables:
+          external_port: "{{ cv_port }}"
+      register: tf
+
+    - name: Afficher la sortie Terraform
+      ansible.builtin.debug:
+        var: tf.outputs.cv_url.value
+
+    - name: Vérifier que le CV répond
+      ansible.builtin.uri:
+        url: "http://localhost:{{ cv_port }}"
+        status_code: 200
